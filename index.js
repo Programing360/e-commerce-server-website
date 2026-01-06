@@ -31,7 +31,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
     const database = client.db("myProjectDB");
     const usersCollection = database.collection("userProduct");
     const cartCollection = database.collection("cart");
@@ -49,6 +49,7 @@ async function run() {
       const token = jwt.sign(user, process.env.JWT_ACCESS, {
         expiresIn: process.env.JWT_EXPIRES_IN,
       });
+    
       res
         .cookie("token", token, {
           httpOnly: true,
@@ -62,7 +63,6 @@ async function run() {
     const verifyToken = (req, res, next) => {
       const token = req.cookies?.token;
       if (!token) {
-        console.log('unauthorized')
         return res.status(401).send({ message: "Unauthorized access" });
       }
 
@@ -253,10 +253,10 @@ async function run() {
     });
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
