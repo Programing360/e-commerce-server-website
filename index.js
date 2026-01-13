@@ -2,12 +2,41 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
 const port = process.env.PORT || 5000;
 
 app.use(cookieParser());
 app.use(express.json());
+
+// helmet security 
+app.use(
+  helmet({
+    // React + Vite dev build এ CSP issue এড়াতে
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.gstatic.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        imgSrc: ["'self'", "data:", "https://*.googleusercontent.com"],
+        connectSrc: ["'self'", "http://localhost:5173"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      },
+    },
+
+    // Firebase hosting + cross origin
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+
+    // iframe attack prevent
+    frameguard: { action: "deny" },
+
+    // XSS protection
+    xssFilter: true,
+  })
+);
+
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -40,28 +69,28 @@ async function run() {
     // Public
     app.post("/jwt", async (req, res) => {
       const { email } = req.body;
-       
+
       if (!email) {
         return res.status(400).send({ message: "Email required" });
       }
 
-      const user = { email }
+      const user = { email };
       const token = jwt.sign(user, process.env.JWT_ACCESS, {
         expiresIn: process.env.JWT_EXPIRES_IN,
       });
-    
+
       res
         .cookie("token", token, {
           httpOnly: true,
-          secure: false, // true in production
-          sameSite: "lax",
+          secure: true, // true in production
+          sameSite: "none",
           maxAge: 24 * 60 * 60 * 1000,
         })
         .send({ success: true });
     });
 
     const verifyToken = (req, res, next) => {
-      const token = req.cookies?.token;
+      const token = req.cookies.token;
       if (!token) {
         return res.status(401).send({ message: "Unauthorized access" });
       }
@@ -71,17 +100,17 @@ async function run() {
           return res.status(401).send({ message: "Unauthorized access" });
         }
         req.decoded = decoded;
-       
+
         next();
       });
     };
 
-    app.get("/allProduct", verifyToken, async (req, res) => {
+    app.get("/allProduct", async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
-    app.get("/allProduct/:id",  verifyToken, async (req, res) => {
+    app.get("/allProduct/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -99,8 +128,8 @@ async function run() {
       }
     });
 
-    app.get("/cart", verifyToken, async (req, res) => {
-      const { email } = req.query;
+    app.get("/cart", async (req, res) => {
+      const email = req.query.email;
 
       if (!email) {
         return res.status(400).send({ message: "Email is required" });
@@ -116,12 +145,11 @@ async function run() {
         // const cartItems = await cartCollection.find().toArray();
         // res.status(200).json(cartItems);
       } catch (err) {
-        console.error(err);
         res.status(500).json({ message: "Server error" });
       }
     });
 
-    app.post("/allProduct",  verifyToken, async (req, res) => {
+    app.post("/allProduct", async (req, res) => {
       const product = req.body;
       const result = await usersCollection.insertOne(product);
       res.send(result);
@@ -129,40 +157,36 @@ async function run() {
 
     // place order
 
-    app.get("/orderDetails", verifyToken, async (req, res) => {
+    app.get("/orderDetails", async (req, res) => {
       const result = await ordersCollection.find().toArray();
       res.send(result);
     });
 
     // GET orders by customer email
-    app.get("/orders", verifyToken, async (req, res) => {
-      const { email } = req.query;
-
+    app.get("/userOrders", verifyToken, async (req, res) => {
+      const { email } = req.decoded;
       if (!email) {
         return res.status(400).send({ message: "Email is required" });
       }
-
       try {
         const orders = await ordersCollection
           .find({ "customer.email": email })
-          .sort({ createdAt: -1 })
+          .sort({ _id: -1 })
           .toArray(); // convert cursor to array
-
         res.send(orders);
       } catch (err) {
         res.status(500).send({ message: "Server error", error: err.message });
       }
     });
 
-    app.post("/orders",  verifyToken, async (req, res) => {
+    app.post("/orders", async (req, res) => {
       const order = req.body;
       const result = await ordersCollection.insertOne(order);
       res.send(result);
     });
 
     // Add to cart
-    app.post("/cart/add",  verifyToken, async (req, res) => {
-      console.log(req.body)
+    app.post("/cart/add", async (req, res) => {
       try {
         const { userId, productId, quantity, email, name, images, price } =
           req.body;
@@ -175,7 +199,7 @@ async function run() {
           images,
           price,
         };
-        // console.log(productId)
+
         if (!item) {
           return res.status(400).json({ message: "All fields are required" });
         }
@@ -189,10 +213,11 @@ async function run() {
             { _id: existing._id },
             { $inc: { quantity: quantity } }
           );
+          res.send({ updated: true });
         } else {
           // Insert new item
           const result = await cartCollection.insertOne(item);
-          // console.log(cartCollection)
+
           res.send(result);
         }
       } catch (err) {
@@ -200,9 +225,9 @@ async function run() {
       }
     });
 
-    app.put("/cart/update/:productId",  verifyToken, async (req, res) => {
+    app.patch("/cart/update/:productId", async (req, res) => {
       const item = req.body;
-      // console.log(item)
+
       const productId = req.params.productId;
       const filter = { _id: new ObjectId(productId) };
       const options = { upsert: true };
@@ -220,7 +245,7 @@ async function run() {
       res.send(await cartCollection.updateOne(filter, updateDoc, options));
     });
 
-    app.patch("/cart/increase/:id",  verifyToken,  async (req, res) => {
+    app.patch("/cart/increase/:id", verifyToken, async (req, res) => {
       await cartCollection.updateOne(
         { _id: new ObjectId(req.params.id) },
         { $inc: { quantity: 1 } }
@@ -228,7 +253,7 @@ async function run() {
       res.send({ success: true });
     });
 
-    app.patch("/cart/decrease/:id",  verifyToken, async (req, res) => {
+    app.patch("/cart/decrease/:id", verifyToken, async (req, res) => {
       const cartItem = await cartCollection.findOne({
         _id: new ObjectId(req.params.id),
       });
@@ -244,9 +269,8 @@ async function run() {
     });
 
     // delete cart
-    app.delete("/cart/delete/:id",  verifyToken, async (req, res) => {
+    app.delete("/cart/delete/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
-      console.log(id)
       const query = { _id: new ObjectId(id) };
       const result = await cartCollection.deleteOne(query);
       res.send(result);
